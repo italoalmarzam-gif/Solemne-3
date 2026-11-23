@@ -50,7 +50,7 @@ def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
   if Path("fotos_jugadores_fifa22.csv").exists():
     df_fotos = pd.read_csv(
         "fotos_jugadores_fifa22.csv",
-        usecols=["sofifa_id", "player_face_url"],
+        uses=["sofifa_id", "player_face_url"],
         low_memory=False,
     ).drop_duplicates(subset=["sofifa_id"])
     df = df.drop(columns=["player_face_url"], errors="ignore").merge(
@@ -334,9 +334,38 @@ else:
   )
   fila_jugador = df_filtrado.loc[opciones_jugadores[jugador_elegido]]
 
+LINKS_JUGADORES = {
+      158023: "https://cdn.sofifa.net/players/158/023/22_120.png",  # L. Messi
+      231747: "https://cdn.sofifa.net/players/231/747/22_120.png",  # K. Mbappé
+      20801: "https://cdn.sofifa.net/players/020/801/22_120.png",  # Cristiano Ronaldo
+  }
+
   col_foto, col_info = st.columns([1, 3])
   with col_foto:
-    mostrar_foto_jugador(fila_jugador)
+    sid = int(fila_jugador["sofifa_id"])
+    link_por_defecto = LINKS_JUGADORES.get(sid) or str(
+        fila_jugador.get("player_face_url", "")
+    ).strip()
+
+    link_manual = st.text_input(
+        "Link de imagen (opcional)",
+        value="",
+        placeholder="Pega aquí un link directo a .png / .jpg",
+    ).strip()
+
+    link_final = (
+        link_manual if link_manual.startswith("http") else link_por_defecto
+    )
+
+    if link_final.startswith("http"):
+      try:
+        st.image(
+            link_final, caption=fila_jugador["short_name"], width=150
+        )
+      except Exception:
+        st.warning("No se pudo cargar la imagen desde ese link.")
+    else:
+      st.caption("Sin link de imagen disponible.")
 
   with col_info:
     st.markdown(f"### {fila_jugador['long_name']}")
