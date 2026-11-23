@@ -50,6 +50,16 @@ def cargar_y_preparar_datos(ruta_csv: str):
   duplicados_antes = int(df.duplicated().sum())
   df = df.drop_duplicates().copy()
 
+  if Path("fotos_jugadores_fifa22.csv").exists():
+    df_fotos = pd.read_csv(
+        "fotos_jugadores_fifa22.csv",
+        usecols=["sofifa_id", "player_face_url"],
+        low_memory=False,
+    ).drop_duplicates(subset=["sofifa_id"])
+    df = df.drop(columns=["player_face_url"], errors="ignore").merge(
+        df_fotos, on="sofifa_id", how="left"
+    )
+
   df["club_name"] = df["club_name"].fillna("Sin club").astype(str)
   df["league_name"] = df["league_name"].fillna("Sin liga").astype(str)
   df["nationality_name"] = (
@@ -68,6 +78,25 @@ def cargar_y_preparar_datos(ruta_csv: str):
       "nulos_valor_eur": int(df["value_eur"].isna().sum()),
   }
   return df, resumen_calidad
+
+
+def obtener_foto_jugador(fila_jugador: pd.Series) -> str:
+  """Devuelve la ruta local o el link de la foto del jugador automáticamente."""
+  sid = int(fila_jugador["sofifa_id"])
+
+  for ext in ["png", "jpg", "jpeg", "webp"]:
+    ruta_local = Path("fotos") / f"{sid}.{ext}"
+    if ruta_local.exists():
+      return str(ruta_local)
+
+  if sid in LINKS_JUGADORES and str(LINKS_JUGADORES[sid]).startswith("http"):
+    return str(LINKS_JUGADORES[sid]).strip()
+
+  url_csv = str(fila_jugador.get("player_face_url", "")).strip()
+  if url_csv.startswith("http"):
+    return url_csv
+
+  return ""
 
 
 def filtrar_jugadores(
@@ -289,31 +318,9 @@ else:
 
   col_foto, col_info = st.columns([1, 3])
   with col_foto:
-    sid = int(fila_jugador["sofifa_id"])
-    link_manual = st.text_input(
-        "Link de imagen (opcional)",
-        value="",
-        placeholder="Pega aquí un link directo a .png / .jpg",
-    ).strip()
-
-    foto_local = None
-    for ext in ["png", "jpg", "jpeg", "webp"]:
-      p = Path("fotos") / f"{sid}.{ext}"
-      if p.exists():
-        foto_local = str(p)
-        break
-
-    link_por_defecto = LINKS_JUGADORES.get(sid) or str(
-        fila_jugador.get("player_face_url", "")
-    ).strip()
-    foto_final = (
-        link_manual
-        if link_manual.startswith("http")
-        else (foto_local or link_por_defecto)
-    )
-
-    if foto_final:
-      st.image(foto_final, caption=fila_jugador["short_name"], width=150)
+    foto_src = obtener_foto_jugador(fila_jugador)
+    if foto_src:
+      st.image(foto_src, caption=fila_jugador["short_name"], width=150)
     else:
       st.caption("Sin foto disponible.")
 
