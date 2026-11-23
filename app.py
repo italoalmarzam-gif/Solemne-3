@@ -1,9 +1,4 @@
 
-Italo Almarza <italo.almarza.m@gmail.com>
-15:34 (hace 13 minutos)
-para mí
-
-
 import streamlit as st
 import pandas as pd
 
