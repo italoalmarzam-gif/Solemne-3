@@ -1,3 +1,6 @@
+import io
+from pathlib import Path
+import urllib.request
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -10,9 +13,16 @@ st.set_page_config(
 SOURCE_NAME = "FIFA 22 complete player dataset (Kaggle)"
 SOURCE_URL = "https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset"
 
+LINKS_JUGADORES = {
+    158023: "https://cdn.sofifa.net/players/158/023/22_120.png",
+    231747: "https://cdn.sofifa.net/players/231/747/22_120.png",
+    20801: "https://cdn.sofifa.net/players/020/801/22_120.png",
+}
+
 
 @st.cache_data
 def cargar_y_preparar_datos(ruta_csv: str):
+  """Carga el CSV local, revisa duplicados/nulos y prepara columnas clave."""
   columnas_utiles = [
       "sofifa_id",
       "short_name",
@@ -42,6 +52,16 @@ def cargar_y_preparar_datos(ruta_csv: str):
   duplicados_antes = int(df.duplicated().sum())
   df = df.drop_duplicates().copy()
 
+  if Path("fotos_jugadores_fifa22.csv").exists():
+    df_fotos = pd.read_csv(
+        "fotos_jugadores_fifa22.csv",
+        usecols=["sofifa_id", "player_face_url"],
+        low_memory=False,
+    ).drop_duplicates(subset=["sofifa_id"])
+    df = df.drop(columns=["player_face_url"], errors="ignore").merge(
+        df_fotos, on="sofifa_id", how="left"
+    )
+
   df["club_name"] = df["club_name"].fillna("Sin club").astype(str)
   df["league_name"] = df["league_name"].fillna("Sin liga").astype(str)
   df["nationality_name"] = (
@@ -62,6 +82,66 @@ def cargar_y_preparar_datos(ruta_csv: str):
   return df, resumen_calidad
 
 
+@st.cache_data(show_spinner=False)
+def descargar_imagen_bytes(url: str):
+  """Intenta descargar bytes de imagen desde una URL directa."""
+  if not url or not url.startswith("http"):
+    return None
+  try:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://sofifa.com/",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=6) as resp:
+      return resp.read()
+  except Exception:
+    return None
+
+
+def mostrar_foto_jugador(fila_jugador: pd.Series, link_manual: str = "") -> None:
+  """Muestra foto desde link manual, archivo local en fotos/, o URL del CSV."""
+  sid = int(fila_jugador["sofifa_id"])
+  nombre = str(fila_jugador["short_name"])
+
+  if link_manual.startswith("http"):
+    try:
+      st.image(link_manual, caption=nombre, width=150)
+      return
+    except Exception:
+      st.warning("No se pudo cargar la imagen desde el link pegado.")
+
+  for ext in ["png", "jpg", "jpeg", "webp"]:
+    ruta_local = Path("fotos") / f"{sid}.{ext}"
+    if ruta_local.exists():
+      st.image(str(ruta_local), caption=nombre, width=150)
+      return
+
+  link_por_defecto = LINKS_JUGADORES.get(sid) or str(
+      fila_jugador.get("player_face_url", "")
+  ).strip()
+
+  img_bytes = descargar_imagen_bytes(link_por_defecto)
+  if img_bytes:
+    st.image(io.BytesIO(img_bytes), caption=nombre, width=150)
+    return
+
+  if link_por_defecto.startswith("http"):
+    try:
+      st.image(link_por_defecto, caption=nombre, width=150)
+      return
+    except Exception:
+      pass
+
+  st.caption("Foto no disponible en este momento.")
+
+
 def filtrar_jugadores(
     df: pd.DataFrame,
     nombre: str,
@@ -70,6 +150,7 @@ def filtrar_jugadores(
     rango_overall: tuple,
     rango_edad: tuple,
 ) -> pd.DataFrame:
+  """Aplica filtros efectivos sobre el DataFrame según la selección del usuario."""
   df_filtrado = df[
       (df["overall"] >= rango_overall[0])
       & (df["overall"] <= rango_overall[1])
@@ -91,7 +172,8 @@ def filtrar_jugadores(
   return df_filtrado
 
 
-def graficar_top_overall(df_sel: pd.DataFrame):
+def graficar_top_overall(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 1 (Barras): Top 10 jugadores por valoración general."""
   top10 = df_sel.sort_values("overall", ascending=False).head(10)
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.barh(
@@ -108,7 +190,8 @@ def graficar_top_overall(df_sel: pd.DataFrame):
   return fig
 
 
-def graficar_edad_vs_overall(df_sel: pd.DataFrame):
+def graficar_edad_vs_overall(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 2 (Dispersión): Relación entre edad y valoración general."""
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.scatter(
       df_sel["age"],
@@ -125,7 +208,8 @@ def graficar_edad_vs_overall(df_sel: pd.DataFrame):
   return fig
 
 
-def graficar_distribucion_potencial(df_sel: pd.DataFrame):
+def graficar_distribucion_potencial(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 3 (Histograma): Distribución del potencial de jugadores."""
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.hist(
       df_sel["potential"].dropna(),
@@ -139,44 +223,3 @@ def graficar_distribucion_potencial(df_sel: pd.DataFrame):
   ax.set_ylabel("Cantidad de jugadores")
   ax.legend(loc="upper left")
   plt.tight_layout()
-  return fig
-
-
-st.title("Explorador de Jugadores FIFA 22 — Solemne 3")
-st.markdown(
-    "**Propósito:** Analizar el rendimiento (`overall`, `potential`), edad y"
-    " valoración de mercado (`value_eur` / `wage_eur`) de jugadores del"
-    " videojuego FIFA 22 para comparar planteles, nacionalidades y perfiles."
-)
-st.markdown(
-    f"**Fuente de datos:** [{SOURCE_NAME}]({SOURCE_URL}) — Cada fila"
-    " representa un jugador; valores monetarios en euros (€), edad en años y"
-    " valoraciones en escala de 0 a 100."
-)
-st.info(
-    "**Instrucciones de uso:** 1) Ajusta los filtros en la barra lateral"
-    " (nacionalidad, pie preferido, valoración, edad y búsqueda). 2) Revisa"
-    " los indicadores, la ficha con foto al costado y los gráficos que se"
-    " actualizan automáticamente. 3) Explora o descarga la tabla resultante."
-)
-
-df_jugadores, calidad = cargar_y_preparar_datos("players_22.csv")
-
-with st.expander("Revisión de datos y calidad (pandas)"):
-  st.write(
-      "Registros listos: **"
-      + f"{calidad['filas_finales']:,}"
-      + "** | Columnas activas: **"
-      + str(calidad["columnas_utilizadas"])
-      + "** | Duplicados eliminados: **"
-      + str(calidad["duplicados_eliminados"])
-      + "** | Nulos en `value_eur`: **"
-      + str(calidad["nulos_valor_eur"])
-      + "**."
-  )
-  st.dataframe(df_jugadores.head(10), use_container_width=True)
-
-st.sidebar.header("Filtros de exploración")
-
-filtro_nombre = st.sidebar.text_input(
-    "Buscar jugador por nombre corto",
