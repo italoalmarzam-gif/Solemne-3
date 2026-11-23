@@ -172,25 +172,4 @@ df_jugadores, calidad = cargar_y_preparar_datos("players_22.csv")
 
 with st.expander("Revisión de datos y calidad (pandas)"):
   st.write(
-      f"Registros listos: **{calidad['filas_finales']:,}** | Columnas"
-      f" activas: **{calidad['columnas_utilizadas']}** | Duplicados"
-      f" eliminados: **{calidad['duplicados_eliminados']}** | Nulos en"
-      f" `value_eur`: **{calidad['nulos_valor_eur']}** (se conservan para no"
-      " perder jugadores sin cotización registrada)."
-  )
-  st.dataframe(df_jugadores.head(10), use_container_width=True)
-
-# --- Barra lateral: Filtros interactivos ---
-st.sidebar.header("Filtros de exploración")
-
-filtro_nombre = st.sidebar.text_input(
-    "Buscar jugador por nombre corto",
-    placeholder="Ej: Messi, Haaland...",
-).strip()
-
-min_ovr, max_ovr = (
-    int(df_jugadores["overall"].min()),
-    int(df_jugadores["overall"].max()),
-)
-filtro_overall = st.sidebar.slider(
-    "Rango de valoración general
+      f"Regist
