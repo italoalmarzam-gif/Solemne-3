@@ -1,476 +1,196 @@
-# ============================================================
-# TERCERA SOLEMNE - TALLER DE PROGRAMACION II
-# Dashboard interactivo FIFA 22 con Streamlit
-# ============================================================
-
-import streamlit as st
-import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
-from pathlib import Path
+import pandas as pd
+import streamlit as st
 
-# ------------------------------------------------------------
-# 1. CONFIGURACION GENERAL DE LA PAGINA
-# ------------------------------------------------------------
 st.set_page_config(
-    page_title="FIFA 22 | Explorador de jugadores",
-    page_icon="⚽",
-    layout="wide"
+    page_title="Solemne 3 — FIFA 22 Analytics",
+    layout="wide",
 )
 
-# ------------------------------------------------------------
-# 2. FUNCION PARA CARGAR LOS DATOS
-# ------------------------------------------------------------
+SOURCE_NAME = "FIFA 22 complete player dataset (Kaggle)"
+SOURCE_URL = "https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset"
+
+
 @st.cache_data
-def cargar_datos():
-    """Lee el CSV local y lo convierte en un DataFrame de pandas."""
-    ruta_csv = Path(__file__).parent / "players_22.csv"
-    datos = pd.read_csv(ruta_csv, low_memory=False)
-    return datos
+def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
+  """Carga el CSV local, revisa duplicados/nulos y prepara columnas clave."""
+  columnas_utiles = [
+      "sofifa_id",
+      "short_name",
+      "long_name",
+      "age",
+      "overall",
+      "potential",
+      "club_name",
+      "league_name",
+      "nationality_name",
+      "player_positions",
+      "preferred_foot",
+      "value_eur",
+      "wage_eur",
+      "pace",
+      "shooting",
+      "passing",
+      "dribbling",
+      "defending",
+      "physic",
+      "player_face_url",
+  ]
+  df = pd.read_csv(
+      ruta_csv, usecols=lambda col: col in columnas_utiles, low_memory=False
+  )
+
+  duplicados_antes = int(df.duplicated().sum())
+  df = df.drop_duplicates().copy()
+
+  # Estandarizar textos faltantes y convertir variables numéricas de forma segura
+  df["club_name"] = df["club_name"].fillna("Sin club").astype(str)
+  df["league_name"] = df["league_name"].fillna("Sin liga").astype(str)
+  df["nationality_name"] = (
+      df["nationality_name"].fillna("Desconocida").astype(str)
+  )
+
+  for col in ["age", "overall", "potential", "value_eur", "wage_eur"]:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+  # Potencial de crecimiento como variable derivada útil para análisis
+  df["crecimiento_potencial"] = df["potential"] - df["overall"]
+
+  resumen_calidad = {
+      "filas_finales": len(df),
+      "columnas_utilizadas": df.shape[1],
+      "duplicados_eliminados": duplicados_antes,
+      "nulos_valor_eur": int(df["value_eur"].isna().sum()),
+  }
+  return df, resumen_calidad
 
 
-# ------------------------------------------------------------
-# 3. FUNCION PARA PREPARAR Y LIMPIAR LOS DATOS
-# ------------------------------------------------------------
-def preparar_datos(datos):
-    """Limpia columnas, elimina duplicados y prepara variables."""
-    datos = datos.copy()
+def filtrar_jugadores(
+    df: pd.DataFrame,
+    nombre: str,
+    nacionalidad: str,
+    pie: str,
+    rango_overall: tuple[int, int],
+    rango_edad: tuple[int, int],
+) -> pd.DataFrame:
+  """Aplica filtros efectivos sobre el DataFrame según la selección del usuario."""
+  df_filtrado = df[
+      (df["overall"] >= rango_overall[0])
+      & (df["overall"] <= rango_overall[1])
+      & (df["age"] >= rango_edad[0])
+      & (df["age"] <= rango_edad[1])
+  ].copy()
 
-    # El identificador del jugador permite detectar registros repetidos.
-    datos = datos.drop_duplicates(subset="sofifa_id")
+  if nacionalidad != "Todas":
+    df_filtrado = df_filtrado[df_filtrado["nationality_name"] == nacionalidad]
 
-    # Convertimos las columnas numéricas importantes al tipo adecuado.
-    columnas_numericas = [
-        "overall", "potential", "age", "value_eur", "wage_eur",
-        "pace", "shooting", "passing", "dribbling", "defending",
-        "physic", "height_cm", "weight_kg"
+  if pie != "Todos":
+    df_filtrado = df_filtrado[df_filtrado["preferred_foot"] == pie]
+
+  if nombre:
+    df_filtrado = df_filtrado[
+        df_filtrado["short_name"].str.contains(nombre, case=False, na=False)
     ]
 
-    for columna in columnas_numericas:
-        datos[columna] = pd.to_numeric(datos[columna], errors="coerce")
-
-    # Reemplazamos los valores faltantes de texto para facilitar los filtros.
-    columnas_texto = [
-        "short_name", "club_name", "league_name",
-        "nationality_name", "player_positions", "preferred_foot"
-    ]
-
-    for columna in columnas_texto:
-        datos[columna] = datos[columna].fillna("No informado")
-
-    # Eliminamos jugadores sin datos esenciales para el análisis.
-    datos = datos.dropna(subset=["overall", "potential", "age"])
-
-    # Creamos una columna con la primera posición del jugador.
-    datos["posicion_principal"] = (
-        datos["player_positions"].str.split(",").str[0].str.strip()
-    )
-
-    return datos
+  return df_filtrado
 
 
-# ------------------------------------------------------------
-# 4. FUNCION PARA APLICAR LOS FILTROS
-# ------------------------------------------------------------
-def filtrar_jugadores(datos, nacionalidades, ligas, posiciones,
-                      rango_edad, rango_valoracion, pie):
-    """Devuelve solamente los jugadores que cumplen los filtros."""
-
-    filtrados = datos.copy()
-
-    if nacionalidades:
-        filtrados = filtrados[
-            filtrados["nationality_name"].isin(nacionalidades)
-        ]
-
-    if ligas:
-        filtrados = filtrados[
-            filtrados["league_name"].isin(ligas)
-        ]
-
-    if posiciones:
-        filtrados = filtrados[
-            filtrados["posicion_principal"].isin(posiciones)
-        ]
-
-    filtrados = filtrados[
-        filtrados["age"].between(rango_edad[0], rango_edad[1])
-    ]
-
-    filtrados = filtrados[
-        filtrados["overall"].between(
-            rango_valoracion[0], rango_valoracion[1]
-        )
-    ]
-
-    if pie != "Todos":
-        filtrados = filtrados[filtrados["preferred_foot"] == pie]
-
-    return filtrados
+def graficar_top_overall(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 1 (Barras): Top 10 jugadores por valoración general."""
+  top10 = df_sel.sort_values("overall", ascending=False).head(10)
+  fig, ax = plt.subplots(figsize=(7, 4))
+  ax.barh(
+      top10["short_name"][::-1],
+      top10["overall"][::-1],
+      color="#1f77b4",
+      label="Overall (0-100)",
+  )
+  ax.set_title("Top 10 jugadores según valoración general")
+  ax.set_xlabel("Valoración general (puntos, escala 0-100)")
+  ax.set_ylabel("Jugador")
+  ax.legend(loc="lower right")
+  plt.tight_layout()
+  return fig
 
 
-# ------------------------------------------------------------
-# 5. CARGA Y PREPARACION INICIAL
-# ------------------------------------------------------------
-try:
-    df_original = cargar_datos()
-    df = preparar_datos(df_original)
-except FileNotFoundError:
-    st.error("No se encontró players_22.csv. Coloca el CSV en la misma carpeta que app.py.")
-    st.stop()
-except Exception as error:
-    st.error(f"Ocurrió un problema al cargar los datos: {error}")
-    st.stop()
+def graficar_edad_vs_overall(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 2 (Dispersión): Relación entre edad y valoración general."""
+  fig, ax = plt.subplots(figsize=(7, 4))
+  ax.scatter(
+      df_sel["age"],
+      df_sel["overall"],
+      alpha=0.55,
+      color="#ff7f0e",
+      label="Jugadores filtrados",
+  )
+  ax.set_title("Edad vs. valoración general")
+  ax.set_xlabel("Edad (años)")
+  ax.set_ylabel("Valoración general (puntos, escala 0-100)")
+  ax.legend(loc="best")
+  plt.tight_layout()
+  return fig
 
 
-# ------------------------------------------------------------
-# 6. TITULO Y DESCRIPCION
-# ------------------------------------------------------------
-st.title("⚽ FIFA 22: Explorador de jugadores")
+def graficar_distribucion_potencial(df_sel: pd.DataFrame) -> plt.Figure:
+  """Gráfico 3 (Histograma): Distribución del potencial de jugadores."""
+  fig, ax = plt.subplots(figsize=(7, 4))
+  ax.hist(
+      df_sel["potential"].dropna(),
+      bins=15,
+      color="#2ca02c",
+      edgecolor="white",
+      label="Frecuencia de jugadores",
+  )
+  ax.set_title("Distribución del potencial de jugadores")
+  ax.set_xlabel("Potencial (puntos, escala 0-100)")
+  ax.set_ylabel("Cantidad de jugadores")
+  ax.legend(loc="upper left")
+  plt.tight_layout()
+  return fig
+
+
+# --- Bloque inicial: Propósito, fuente e instrucciones ---
+st.title("Explorador de Jugadores FIFA 22 — Solemne 3")
 st.markdown(
-    """
-    Aplicación interactiva para explorar y comparar futbolistas de FIFA 22.
-    Utiliza los filtros para analizar jugadores según su nacionalidad,
-    liga, posición, edad, valoración y pie preferido.
-    """
+    "**Propósito:** Analizar el rendimiento (`overall`, `potential`), edad y"
+    " valoración de mercado (`value_eur` / `wage_eur`) de jugadores del"
+    " videojuego FIFA 22 para comparar planteles, nacionalidades y perfiles."
 )
-
+st.markdown(
+    f"**Fuente de datos:** [{SOURCE_NAME}]({SOURCE_URL}) — Cada fila"
+    " representa un jugador; valores monetarios en euros (€), edad en años y"
+    " valoraciones en escala de 0 a 100."
+)
 st.info(
-    "Instrucciones: selecciona los filtros de la barra lateral. "
-    "Los indicadores, la tabla y los gráficos se actualizarán automáticamente."
+    "**Instrucciones de uso:** 1) Ajusta los filtros en la barra lateral"
+    " (nacionalidad, pie preferido, valoración, edad y búsqueda). 2) Revisa"
+    " los indicadores, la ficha con foto y los gráficos que se actualizan"
+    " automáticamente. 3) Explora o descarga la tabla resultante."
 )
 
-# ------------------------------------------------------------
-# 7. BARRA LATERAL: FILTROS INTERACTIVOS
-# ------------------------------------------------------------
-st.sidebar.header("Filtros de búsqueda")
-st.sidebar.write("Selecciona las características de los jugadores.")
+df_jugadores, calidad = cargar_y_preparar_datos("players_22.csv")
 
-lista_nacionalidades = sorted(df["nationality_name"].unique())
-nacionalidades = st.sidebar.multiselect(
-    "Nacionalidad",
-    options=lista_nacionalidades,
-    default=[]
+with st.expander("Revisión de datos y calidad (pandas)"):
+  st.write(
+      f"Registros listos: **{calidad['filas_finales']:,}** | Columnas"
+      f" activas: **{calidad['columnas_utilizadas']}** | Duplicados"
+      f" eliminados: **{calidad['duplicados_eliminados']}** | Nulos en"
+      f" `value_eur`: **{calidad['nulos_valor_eur']}** (se conservan para no"
+      " perder jugadores sin cotización registrada)."
+  )
+  st.dataframe(df_jugadores.head(10), use_container_width=True)
+
+# --- Barra lateral: Filtros interactivos ---
+st.sidebar.header("Filtros de exploración")
+
+filtro_nombre = st.sidebar.text_input(
+    "Buscar jugador por nombre corto",
+    placeholder="Ej: Messi, Haaland...",
+).strip()
+
+min_ovr, max_ovr = (
+    int(df_jugadores["overall"].min()),
+    int(df_jugadores["overall"].max()),
 )
-
-lista_ligas = sorted(df["league_name"].unique())
-ligas = st.sidebar.multiselect(
-    "Liga",
-    options=lista_ligas,
-    default=[]
-)
-
-lista_posiciones = sorted(df["posicion_principal"].dropna().unique())
-posiciones = st.sidebar.multiselect(
-    "Posición principal",
-    options=lista_posiciones,
-    default=[]
-)
-
-edad_min = int(df["age"].min())
-edad_max = int(df["age"].max())
-rango_edad = st.sidebar.slider(
-    "Rango de edad",
-    min_value=edad_min,
-    max_value=edad_max,
-    value=(edad_min, edad_max)
-)
-
-rango_valoracion = st.sidebar.slider(
-    "Valoración general",
-    min_value=0,
-    max_value=100,
-    value=(50, 100)
-)
-
-pie = st.sidebar.radio(
-    "Pie preferido",
-    options=["Todos", "Right", "Left"],
-    horizontal=True
-)
-
-# Botón adicional para mostrar u ocultar registros.
-mostrar_datos_completos = st.sidebar.checkbox(
-    "Mostrar más columnas en la tabla",
-    value=False
-)
-
-# ------------------------------------------------------------
-# 8. APLICAR FILTROS
-# ------------------------------------------------------------
-df_filtrado = filtrar_jugadores(
-    df,
-    nacionalidades,
-    ligas,
-    posiciones,
-    rango_edad,
-    rango_valoracion,
-    pie
-)
-
-st.divider()
-st.header("Resumen de los jugadores seleccionados")
-
-# ------------------------------------------------------------
-# 9. INDICADORES PRINCIPALES
-# ------------------------------------------------------------
-col1, col2, col3, col4 = st.columns(4)
-
-cantidad_jugadores = len(df_filtrado)
-
-if cantidad_jugadores > 0:
-    promedio_overall = np.mean(df_filtrado["overall"])
-    promedio_potencial = np.mean(df_filtrado["potential"])
-    promedio_edad = np.mean(df_filtrado["age"])
-
-    col1.metric("Jugadores encontrados", f"{cantidad_jugadores:,}")
-    col2.metric("Valoración promedio", f"{promedio_overall:.1f}")
-    col3.metric("Potencial promedio", f"{promedio_potencial:.1f}")
-    col4.metric("Edad promedio", f"{promedio_edad:.1f} años")
-else:
-    col1.metric("Jugadores encontrados", "0")
-    col2.metric("Valoración promedio", "Sin datos")
-    col3.metric("Potencial promedio", "Sin datos")
-    col4.metric("Edad promedio", "Sin datos")
-    st.warning("No hay jugadores que cumplan todos los filtros seleccionados.")
-
-# ------------------------------------------------------------
-# 10. PESTAÑAS PARA ORGANIZAR LA INTERFAZ
-# ------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Tabla de jugadores",
-    "Gráficos",
-    "Comparación",
-    "Información del dataset"
-])
-
-# ------------------------------------------------------------
-# PESTAÑA 1: TABLA DE JUGADORES
-# ------------------------------------------------------------
-with tab1:
-    st.subheader("Listado de jugadores")
-
-    columnas_tabla = [
-        "short_name", "age", "nationality_name", "club_name",
-        "player_positions", "overall", "potential",
-        "value_eur", "preferred_foot"
-    ]
-
-    if mostrar_datos_completos:
-        columnas_tabla += [
-            "pace", "shooting", "passing", "dribbling",
-            "defending", "physic"
-        ]
-
-    tabla = df_filtrado[columnas_tabla].copy()
-
-    tabla = tabla.rename(columns={
-        "short_name": "Jugador",
-        "age": "Edad",
-        "nationality_name": "Nacionalidad",
-        "club_name": "Club",
-        "player_positions": "Posiciones",
-        "overall": "Valoración",
-        "potential": "Potencial",
-        "value_eur": "Valor (€)",
-        "preferred_foot": "Pie preferido",
-        "pace": "Velocidad",
-        "shooting": "Tiro",
-        "passing": "Pase",
-        "dribbling": "Regate",
-        "defending": "Defensa",
-        "physic": "Físico"
-    })
-
-    st.dataframe(tabla, use_container_width=True, hide_index=True)
-
-    st.caption(
-        f"Se muestran {len(tabla):,} jugadores después de aplicar los filtros."
-    )
-
-# ------------------------------------------------------------
-# PESTAÑA 2: GRAFICOS
-# ------------------------------------------------------------
-with tab2:
-    st.subheader("Análisis visual de los jugadores")
-
-    if not df_filtrado.empty:
-        # GRAFICO 1: Barras - promedio de valoración por club.
-        datos_clubes = (
-            df_filtrado.groupby("club_name")["overall"]
-            .mean()
-            .sort_values(ascending=False)
-            .head(10)
-            .sort_values()
-        )
-
-        fig1, ax1 = plt.subplots(figsize=(10, 5))
-        ax1.barh(datos_clubes.index, datos_clubes.values)
-        ax1.set_title("Top 10 clubes según valoración promedio")
-        ax1.set_xlabel("Valoración promedio")
-        ax1.set_ylabel("Club")
-        fig1.tight_layout()
-        st.pyplot(fig1)
-        plt.close(fig1)
-
-        # GRAFICO 2: Histograma - distribución de edades.
-        fig2, ax2 = plt.subplots(figsize=(10, 5))
-        ax2.hist(df_filtrado["age"].dropna(), bins=15, edgecolor="black")
-        ax2.set_title("Distribución de edades de los jugadores")
-        ax2.set_xlabel("Edad")
-        ax2.set_ylabel("Cantidad de jugadores")
-        fig2.tight_layout()
-        st.pyplot(fig2)
-        plt.close(fig2)
-
-        # GRAFICO 3: Dispersión - valoración frente a potencial.
-        fig3, ax3 = plt.subplots(figsize=(10, 5))
-        puntos = ax3.scatter(
-            df_filtrado["overall"],
-            df_filtrado["potential"],
-            c=df_filtrado["age"],
-            alpha=0.6
-        )
-        ax3.set_title("Relación entre valoración general y potencial")
-        ax3.set_xlabel("Valoración general")
-        ax3.set_ylabel("Potencial")
-        fig3.colorbar(puntos, ax=ax3, label="Edad")
-        fig3.grid(True, alpha=0.3)
-        fig3.tight_layout()
-        st.pyplot(fig3)
-        plt.close(fig3)
-    else:
-        st.warning("No hay datos suficientes para generar los gráficos.")
-
-# ------------------------------------------------------------
-# PESTAÑA 3: COMPARACION DE JUGADORES
-# ------------------------------------------------------------
-with tab3:
-    st.subheader("Comparar dos futbolistas")
-
-    nombres_jugadores = sorted(df["short_name"].dropna().unique())
-
-    if len(nombres_jugadores) >= 2:
-        jugador_1 = st.selectbox(
-            "Selecciona el primer jugador",
-            options=nombres_jugadores,
-            index=0
-        )
-
-        jugador_2 = st.selectbox(
-            "Selecciona el segundo jugador",
-            options=nombres_jugadores,
-            index=1
-        )
-
-        datos_j1 = df[df["short_name"] == jugador_1].iloc[0]
-        datos_j2 = df[df["short_name"] == jugador_2].iloc[0]
-
-        comparacion = pd.DataFrame({
-            "Estadística": [
-                "Valoración", "Potencial", "Velocidad",
-                "Tiro", "Pase", "Regate", "Defensa", "Físico"
-            ],
-            jugador_1: [
-                datos_j1["overall"], datos_j1["potential"],
-                datos_j1["pace"], datos_j1["shooting"],
-                datos_j1["passing"], datos_j1["dribbling"],
-                datos_j1["defending"], datos_j1["physic"]
-            ],
-            jugador_2: [
-                datos_j2["overall"], datos_j2["potential"],
-                datos_j2["pace"], datos_j2["shooting"],
-                datos_j2["passing"], datos_j2["dribbling"],
-                datos_j2["defending"], datos_j2["physic"]
-            ]
-        })
-
-        st.dataframe(comparacion, use_container_width=True, hide_index=True)
-
-        comparacion_larga = comparacion.melt(
-            id_vars="Estadística",
-            var_name="Jugador",
-            value_name="Puntuación"
-        )
-
-        fig4, ax4 = plt.subplots(figsize=(11, 5))
-        estadisticas = comparacion["Estadística"]
-        posiciones = np.arange(len(estadisticas))
-        ancho = 0.35
-
-        ax4.bar(
-            posiciones - ancho / 2,
-            comparacion[jugador_1],
-            width=ancho,
-            label=jugador_1
-        )
-        ax4.bar(
-            posiciones + ancho / 2,
-            comparacion[jugador_2],
-            width=ancho,
-            label=jugador_2
-        )
-
-        ax4.set_title("Comparación de estadísticas")
-        ax4.set_xlabel("Estadística")
-        ax4.set_ylabel("Puntuación")
-        ax4.set_xticks(posiciones)
-        ax4.set_xticklabels(estadisticas, rotation=20, ha="right")
-        ax4.legend()
-        ax4.grid(axis="y", alpha=0.3)
-        fig4.tight_layout()
-        st.pyplot(fig4)
-        plt.close(fig4)
-    else:
-        st.warning("No hay suficientes jugadores para realizar una comparación.")
-
-# ------------------------------------------------------------
-# PESTAÑA 4: INFORMACION Y CALIDAD DE LOS DATOS
-# ------------------------------------------------------------
-with tab4:
-    st.subheader("Información general del conjunto de datos")
-
-    col_a, col_b = st.columns(2)
-    col_a.metric("Filas originales", f"{len(df_original):,}")
-    col_b.metric("Filas después de limpieza", f"{len(df):,}")
-
-    st.write("**Cantidad de columnas:**", df.shape[1])
-    st.write("**Jugadores duplicados eliminados:**",
-             len(df_original) - len(df))
-
-    st.markdown("#### Valores faltantes en variables principales")
-    columnas_revision = [
-        "overall", "potential", "age", "value_eur",
-        "pace", "shooting", "passing", "dribbling"
-    ]
-
-    faltantes = df_original[columnas_revision].isna().sum().reset_index()
-    faltantes.columns = ["Variable", "Valores faltantes"]
-    st.dataframe(faltantes, use_container_width=True, hide_index=True)
-
-    st.markdown("#### Tipos de datos")
-    tipos = df.dtypes.astype(str).reset_index()
-    tipos.columns = ["Variable", "Tipo de dato"]
-    st.dataframe(tipos, use_container_width=True, hide_index=True)
-
-    st.markdown("#### Fuente de los datos")
-    st.write("Archivo utilizado: `players_22.csv`")
-    st.write(
-        "Dataset de jugadores de FIFA 22. "
-        "Referencia del conjunto de datos: "
-        "[FIFA 22 Complete Player Dataset - Kaggle]"
-        "(https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset)."
-    )
-    st.caption(
-        "Los valores económicos corresponden al dataset de FIFA 22 y no "
-        "representan necesariamente precios actuales del mercado."
-    )
-
-# ------------------------------------------------------------
-# 11. PIE DE PAGINA
-# ------------------------------------------------------------
-st.divider()
-st.caption(
-    "Tercera Solemne | Taller de Programación II | "
-    "Dashboard desarrollado con Streamlit y pandas."
-)
+filtro_overall = st.sidebar.slider(
+    "Rango de valoración general
