@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 import urllib.request
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -45,6 +46,17 @@ def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
   duplicados_antes = int(df.duplicated().sum())
   df = df.drop_duplicates().copy()
 
+  # Si subiste fotos_jugadores_fifa22.csv, lo unimos por sofifa_id
+  if Path("fotos_jugadores_fifa22.csv").exists():
+    df_fotos = pd.read_csv(
+        "fotos_jugadores_fifa22.csv",
+        usecols=["sofifa_id", "player_face_url"],
+        low_memory=False,
+    ).drop_duplicates(subset=["sofifa_id"])
+    df = df.drop(columns=["player_face_url"], errors="ignore").merge(
+        df_fotos, on="sofifa_id", how="left"
+    )
+
   df["club_name"] = df["club_name"].fillna("Sin club").astype(str)
   df["league_name"] = df["league_name"].fillna("Sin liga").astype(str)
   df["nationality_name"] = (
@@ -63,6 +75,51 @@ def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
       "nulos_valor_eur": int(df["value_eur"].isna().sum()),
   }
   return df, resumen_calidad
+
+
+@st.cache_data(show_spinner=False)
+def descargar_imagen_url(url: str) -> bytes | None:
+  """Descarga bytes de imagen desde URL externa con User-Agent."""
+  if not url or not url.startswith("http"):
+    return None
+  try:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    with urllib.request.urlopen(req, timeout=6) as resp:
+      return resp.read()
+  except Exception:
+    return None
+
+
+def mostrar_foto_jugador(fila_jugador: pd.Series) -> None:
+  """Muestra la foto local en fotos/{sofifa_id} o desde la URL del CSV."""
+  sid = int(fila_jugador["sofifa_id"])
+  for ext in ["png", "jpg", "jpeg", "webp"]:
+    ruta_local = Path("fotos") / f"{sid}.{ext}"
+    if ruta_local.exists():
+      st.image(
+          str(ruta_local), caption=fila_jugador["short_name"], width=150
+      )
+      return
+
+  foto_url = str(fila_jugador.get("player_face_url", "")).strip()
+  img_bytes = descargar_imagen_url(foto_url)
+  if img_bytes:
+    st.image(
+        io.BytesIO(img_bytes), caption=fila_jugador["short_name"], width=150
+    )
+    return
+
+  if foto_url.startswith("http"):
+    try:
+      st.image(foto_url, caption=fila_jugador["short_name"], width=150)
+      return
+    except Exception:
+      pass
+
+  st.warning("No se pudo cargar la foto.")
 
 
 def filtrar_jugadores(
@@ -279,38 +336,7 @@ else:
 
   col_foto, col_info = st.columns([1, 3])
   with col_foto:
-    foto_url = str(fila_jugador.get("player_face_url", "")).strip()
-    mostrada = False
-    if foto_url.startswith("http"):
-      try:
-        req = urllib.request.Request(
-            foto_url,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(req, timeout=6) as resp:
-          img_bytes = resp.read()
-        st.image(
-            io.BytesIO(img_bytes),
-            caption=fila_jugador["short_name"],
-            width=150,
-        )
-        mostrada = True
-      except Exception:
-        pass
-
-    if not mostrada and foto_url.startswith("http"):
-      try:
-        st.image(
-            foto_url,
-            caption=fila_jugador["short_name"],
-            width=150,
-        )
-        mostrada = True
-      except Exception:
-        pass
-
-    if not mostrada:
-      st.warning("No se pudo cargar la foto desde la URL.")
+    mostrar_foto_jugador(fila_jugador)
 
   with col_info:
     st.markdown(f"### {fila_jugador['long_name']}")
