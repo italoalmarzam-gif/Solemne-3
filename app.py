@@ -1,6 +1,3 @@
-import io
-from pathlib import Path
-import urllib.request
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -15,8 +12,7 @@ SOURCE_URL = "https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-p
 
 
 @st.cache_data
-def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
-  """Carga el CSV local, revisa duplicados/nulos y prepara columnas clave."""
+def cargar_y_preparar_datos(ruta_csv: str):
   columnas_utiles = [
       "sofifa_id",
       "short_name",
@@ -46,17 +42,6 @@ def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
   duplicados_antes = int(df.duplicated().sum())
   df = df.drop_duplicates().copy()
 
-  # Si subiste fotos_jugadores_fifa22.csv, lo unimos por sofifa_id
-  if Path("fotos_jugadores_fifa22.csv").exists():
-    df_fotos = pd.read_csv(
-        "fotos_jugadores_fifa22.csv",
-        uses=["sofifa_id", "player_face_url"],
-        low_memory=False,
-    ).drop_duplicates(subset=["sofifa_id"])
-    df = df.drop(columns=["player_face_url"], errors="ignore").merge(
-        df_fotos, on="sofifa_id", how="left"
-    )
-
   df["club_name"] = df["club_name"].fillna("Sin club").astype(str)
   df["league_name"] = df["league_name"].fillna("Sin liga").astype(str)
   df["nationality_name"] = (
@@ -77,60 +62,14 @@ def cargar_y_preparar_datos(ruta_csv: str) -> tuple[pd.DataFrame, dict]:
   return df, resumen_calidad
 
 
-@st.cache_data(show_spinner=False)
-def descargar_imagen_url(url: str) -> bytes | None:
-  """Descarga bytes de imagen desde URL externa con User-Agent."""
-  if not url or not url.startswith("http"):
-    return None
-  try:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    with urllib.request.urlopen(req, timeout=6) as resp:
-      return resp.read()
-  except Exception:
-    return None
-
-
-def mostrar_foto_jugador(fila_jugador: pd.Series) -> None:
-  """Muestra la foto local en fotos/{sofifa_id} o desde la URL del CSV."""
-  sid = int(fila_jugador["sofifa_id"])
-  for ext in ["png", "jpg", "jpeg", "webp"]:
-    ruta_local = Path("fotos") / f"{sid}.{ext}"
-    if ruta_local.exists():
-      st.image(
-          str(ruta_local), caption=fila_jugador["short_name"], width=150
-      )
-      return
-
-  foto_url = str(fila_jugador.get("player_face_url", "")).strip()
-  img_bytes = descargar_imagen_url(foto_url)
-  if img_bytes:
-    st.image(
-        io.BytesIO(img_bytes), caption=fila_jugador["short_name"], width=150
-    )
-    return
-
-  if foto_url.startswith("http"):
-    try:
-      st.image(foto_url, caption=fila_jugador["short_name"], width=150)
-      return
-    except Exception:
-      pass
-
-  st.warning("No se pudo cargar la foto.")
-
-
 def filtrar_jugadores(
     df: pd.DataFrame,
     nombre: str,
     nacionalidad: str,
     pie: str,
-    rango_overall: tuple[int, int],
-    rango_edad: tuple[int, int],
+    rango_overall: tuple,
+    rango_edad: tuple,
 ) -> pd.DataFrame:
-  """Aplica filtros efectivos sobre el DataFrame según la selección del usuario."""
   df_filtrado = df[
       (df["overall"] >= rango_overall[0])
       & (df["overall"] <= rango_overall[1])
@@ -152,8 +91,7 @@ def filtrar_jugadores(
   return df_filtrado
 
 
-def graficar_top_overall(df_sel: pd.DataFrame) -> plt.Figure:
-  """Gráfico 1 (Barras): Top 10 jugadores por valoración general."""
+def graficar_top_overall(df_sel: pd.DataFrame):
   top10 = df_sel.sort_values("overall", ascending=False).head(10)
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.barh(
@@ -170,8 +108,7 @@ def graficar_top_overall(df_sel: pd.DataFrame) -> plt.Figure:
   return fig
 
 
-def graficar_edad_vs_overall(df_sel: pd.DataFrame) -> plt.Figure:
-  """Gráfico 2 (Dispersión): Relación entre edad y valoración general."""
+def graficar_edad_vs_overall(df_sel: pd.DataFrame):
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.scatter(
       df_sel["age"],
@@ -188,8 +125,7 @@ def graficar_edad_vs_overall(df_sel: pd.DataFrame) -> plt.Figure:
   return fig
 
 
-def graficar_distribucion_potencial(df_sel: pd.DataFrame) -> plt.Figure:
-  """Gráfico 3 (Histograma): Distribución del potencial de jugadores."""
+def graficar_distribucion_potencial(df_sel: pd.DataFrame):
   fig, ax = plt.subplots(figsize=(7, 4))
   ax.hist(
       df_sel["potential"].dropna(),
@@ -240,179 +176,7 @@ with st.expander("Revisión de datos y calidad (pandas)"):
   )
   st.dataframe(df_jugadores.head(10), use_container_width=True)
 
-# --- Barra lateral: Filtros interactivos ---
 st.sidebar.header("Filtros de exploración")
 
 filtro_nombre = st.sidebar.text_input(
     "Buscar jugador por nombre corto",
-    placeholder="Ej: Messi, Haaland...",
-).strip()
-
-min_ovr, max_ovr = (
-    int(df_jugadores["overall"].min()),
-    int(df_jugadores["overall"].max()),
-)
-filtro_overall = st.sidebar.slider(
-    "Rango de valoración general (overall)",
-    min_value=min_ovr,
-    max_value=max_ovr,
-    value=(75, max_ovr),
-)
-
-min_age, max_age = (
-    int(df_jugadores["age"].min()),
-    int(df_jugadores["age"].max()),
-)
-filtro_edad = st.sidebar.slider(
-    "Rango de edad (años)",
-    min_value=min_age,
-    max_value=max_age,
-    value=(min_age, max_age),
-)
-
-opciones_nacion = ["Todas"] + sorted(
-    df_jugadores["nationality_name"].dropna().unique().tolist()
-)
-filtro_nacion = st.sidebar.selectbox("Nacionalidad", opciones_nacion)
-
-opciones_pie = ["Todos"] + sorted(
-    df_jugadores["preferred_foot"].dropna().unique().tolist()
-)
-filtro_pie = st.sidebar.selectbox("Pie preferido", opciones_pie)
-
-df_filtrado = filtrar_jugadores(
-    df_jugadores,
-    nombre=filtro_nombre,
-    nacionalidad=filtro_nacion,
-    pie=filtro_pie,
-    rango_overall=filtro_overall,
-    rango_edad=filtro_edad,
-)
-
-# --- Indicadores calculados (KPIs) ---
-st.subheader("Indicadores principales según selección")
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric("Jugadores filtrados", f"{len(df_filtrado):,}")
-col2.metric(
-    "Overall promedio",
-    f"{df_filtrado['overall'].mean():.1f}" if not df_filtrado.empty else "—",
-)
-col3.metric(
-    "Potencial promedio",
-    f"{df_filtrado['potential'].mean():.1f}"
-    if not df_filtrado.empty
-    else "—",
-)
-col4.metric(
-    "Valor de mercado promedio (€)",
-    f"€{df_filtrado['value_eur'].mean():,.0f}"
-    if not df_filtrado.empty and df_filtrado["value_eur"].notna().any()
-    else "—",
-)
-
-st.divider()
-
-if df_filtrado.empty:
-  st.warning(
-      "No hay jugadores que coincidan con los filtros actuales. Ajusta algún"
-      " criterio en la barra lateral."
-  )
-else:
-  # --- Ficha con foto al costado del jugador filtrado ---
-  st.subheader("Detalle y foto del jugador")
-  opciones_jugadores = {
-      f"{row['short_name']} — {row['club_name']} (ID {int(row['sofifa_id'])})": (
-          idx
-      )
-      for idx, row in df_filtrado.iterrows()
-  }
-  jugador_elegido = st.selectbox(
-      "Jugador seleccionado del filtro",
-      list(opciones_jugadores.keys()),
-      index=0,
-  )
-  fila_jugador = df_filtrado.loc[opciones_jugadores[jugador_elegido]]
-
-LINKS_JUGADORES = {
-      158023: "https://cdn.sofifa.net/players/158/023/22_120.png",  # L. Messi
-      231747: "https://cdn.sofifa.net/players/231/747/22_120.png",  # K. Mbappé
-      20801: "https://cdn.sofifa.net/players/020/801/22_120.png",  # Cristiano Ronaldo
-  }
-
-  col_foto, col_info = st.columns([1, 3])
-  with col_foto:
-    sid = int(fila_jugador["sofifa_id"])
-    link_por_defecto = LINKS_JUGADORES.get(sid) or str(
-        fila_jugador.get("player_face_url", "")
-    ).strip()
-
-    link_manual = st.text_input(
-        "Link de imagen (opcional)",
-        value="",
-        placeholder="Pega aquí un link directo a .png / .jpg",
-    ).strip()
-
-    link_final = (
-        link_manual if link_manual.startswith("http") else link_por_defecto
-    )
-
-    if link_final.startswith("http"):
-      try:
-        st.image(
-            link_final, caption=fila_jugador["short_name"], width=150
-        )
-      except Exception:
-        st.warning("No se pudo cargar la imagen desde ese link.")
-    else:
-      st.caption("Sin link de imagen disponible.")
-
-  with col_info:
-    st.markdown(f"### {fila_jugador['long_name']}")
-    st.write(f"**Club:** {fila_jugador['club_name']}")
-    st.write(f"**Nacionalidad:** {fila_jugador['nationality_name']}")
-    st.write(f"**Posiciones:** {fila_jugador['player_positions']}")
-    valor_str = (
-        f"€{fila_jugador['value_eur']:,.0f}"
-        if pd.notna(fila_jugador["value_eur"])
-        else "N/D"
-    )
-    st.write(
-        f"**Edad:** {int(fila_jugador['age'])} años | **Overall:**"
-        f" {int(fila_jugador['overall'])} | **Potencial:**"
-        f" {int(fila_jugador['potential'])} | **Valor:** {valor_str}"
-    )
-
-  st.divider()
-
-  # --- Tres gráficos distintos ---
-  st.subheader("Visualizaciones de análisis")
-  g1, g2 = st.columns(2)
-  with g1:
-    st.pyplot(graficar_top_overall(df_filtrado))
-  with g2:
-    st.pyplot(graficar_edad_vs_overall(df_filtrado))
-
-  st.pyplot(graficar_distribucion_potencial(df_filtrado))
-
-  # --- Tabla detallada y descarga ---
-  st.subheader("Tabla de jugadores filtrados")
-  columnas_tabla = [
-      "short_name",
-      "age",
-      "nationality_name",
-      "club_name",
-      "player_positions",
-      "overall",
-      "potential",
-      "value_eur",
-      "wage_eur",
-  ]
-  st.dataframe(df_filtrado[columnas_tabla], use_container_width=True)
-
-  st.download_button(
-      label="Descargar datos filtrados en CSV",
-      data=df_filtrado[columnas_tabla].to_csv(index=False).encode("utf-8"),
-      file_name="jugadores_fifa22_filtrados.csv",
-      mime="text/csv",
-  )
