@@ -1,1 +1,4 @@
-
+File "/mount/src/solemne-3/app.py", line 175
+        f"Regist
+        ^
+SyntaxError: unterminated f-string literal (detected at line 175)
