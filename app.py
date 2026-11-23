@@ -1,3 +1,5 @@
+import io
+import urllib.request
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -161,8 +163,8 @@ st.markdown(
 st.info(
     "**Instrucciones de uso:** 1) Ajusta los filtros en la barra lateral"
     " (nacionalidad, pie preferido, valoración, edad y búsqueda). 2) Revisa"
-    " los indicadores, la ficha con foto y los gráficos que se actualizan"
-    " automáticamente. 3) Explora o descarga la tabla resultante."
+    " los indicadores, la ficha con foto al costado y los gráficos que se"
+    " actualizan automáticamente. 3) Explora o descarga la tabla resultante."
 )
 
 df_jugadores, calidad = cargar_y_preparar_datos("players_22.csv")
@@ -181,6 +183,7 @@ with st.expander("Revisión de datos y calidad (pandas)"):
   )
   st.dataframe(df_jugadores.head(10), use_container_width=True)
 
+# --- Barra lateral: Filtros interactivos ---
 st.sidebar.header("Filtros de exploración")
 
 filtro_nombre = st.sidebar.text_input(
@@ -229,6 +232,7 @@ df_filtrado = filtrar_jugadores(
     rango_edad=filtro_edad,
 )
 
+# --- Indicadores calculados (KPIs) ---
 st.subheader("Indicadores principales según selección")
 col1, col2, col3, col4 = st.columns(4)
 
@@ -258,38 +262,61 @@ if df_filtrado.empty:
       " criterio en la barra lateral."
   )
 else:
-  st.subheader("Ficha del jugador y foto")
-  nombres_disponibles = df_filtrado["short_name"].tolist()
+  # --- Ficha con foto al costado del jugador filtrado ---
+  st.subheader("Detalle y foto del jugador")
+  opciones_jugadores = {
+      f"{row['short_name']} — {row['club_name']} (ID {int(row['sofifa_id'])})": (
+          idx
+      )
+      for idx, row in df_filtrado.iterrows()
+  }
   jugador_elegido = st.selectbox(
-      "Selecciona un jugador del resultado filtrado para ver su foto",
-      nombres_disponibles,
+      "Jugador seleccionado del filtro",
+      list(opciones_jugadores.keys()),
+      index=0,
   )
-  fila_jugador = df_filtrado[
-      df_filtrado["short_name"] == jugador_elegido
-  ].iloc[0]
+  fila_jugador = df_filtrado.loc[opciones_jugadores[jugador_elegido]]
 
   col_foto, col_info = st.columns([1, 3])
   with col_foto:
-    foto_url = fila_jugador.get("player_face_url", "")
-    if isinstance(foto_url, str) and foto_url.startswith("http"):
+    foto_url = str(fila_jugador.get("player_face_url", "")).strip()
+    mostrada = False
+    if foto_url.startswith("http"):
+      try:
+        req = urllib.request.Request(
+            foto_url,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+          img_bytes = resp.read()
+        st.image(
+            io.BytesIO(img_bytes),
+            caption=fila_jugador["short_name"],
+            width=150,
+        )
+        mostrada = True
+      except Exception:
+        pass
+
+    if not mostrada and foto_url.startswith("http"):
       try:
         st.image(
             foto_url,
-            caption=f"{fila_jugador['short_name']} ({fila_jugador['club_name']})",
-            width=140,
+            caption=fila_jugador["short_name"],
+            width=150,
         )
+        mostrada = True
       except Exception:
-        st.caption("No se pudo cargar la imagen desde la URL.")
-    else:
-      st.caption("Sin fotografía disponible.")
+        pass
+
+    if not mostrada:
+      st.warning("No se pudo cargar la foto desde la URL.")
 
   with col_info:
-    st.write(f"**Nombre completo:** {fila_jugador['long_name']}")
-    st.write(
-        f"**Nacionalidad:** {fila_jugador['nationality_name']} | **Club:**"
-        f" {fila_jugador['club_name']} | **Posiciones:**"
-        f" {fila_jugador['player_positions']}"
-    )
+    st.markdown(f"### {fila_jugador['long_name']}")
+    st.write(f"**Club:** {fila_jugador['club_name']}")
+    st.write(f"**Nacionalidad:** {fila_jugador['nationality_name']}")
+    st.write(f"**Posiciones:** {fila_jugador['player_positions']}")
     valor_str = (
         f"€{fila_jugador['value_eur']:,.0f}"
         if pd.notna(fila_jugador["value_eur"])
@@ -303,6 +330,7 @@ else:
 
   st.divider()
 
+  # --- Tres gráficos distintos ---
   st.subheader("Visualizaciones de análisis")
   g1, g2 = st.columns(2)
   with g1:
@@ -312,6 +340,7 @@ else:
 
   st.pyplot(graficar_distribucion_potencial(df_filtrado))
 
+  # --- Tabla detallada y descarga ---
   st.subheader("Tabla de jugadores filtrados")
   columnas_tabla = [
       "short_name",
